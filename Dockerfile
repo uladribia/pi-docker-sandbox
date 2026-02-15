@@ -1,38 +1,33 @@
-FROM node:20-slim
+FROM mcr.microsoft.com/devcontainers/typescript-node:1-20-bookworm
 
-# Install common development tools
+# Avoid warnings by switching to non-interactive
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install additional OS packages
+# ripgrep, fd-find: Fast search tools
+# python3-venv: Needed for some python tools despite uv
 RUN apt-get update && apt-get install -y \
-    git \
-    bash \
-    curl \
-    wget \
-    vim \
-    nano \
-    python3 \
-    python3-pip \
-    python3-venv \
-    build-essential \
     ripgrep \
     fd-find \
-    jq \
-    tree \
+    python3-venv \
     zip \
     unzip \
-    sudo \
     && rm -rf /var/lib/apt/lists/*
 
-# Install pi-coding-agent
+# Install uv (The Python package manager)
+# We install it to /usr/local/bin so it's available to all
+ADD --chmod=755 https://astral.sh/uv/install.sh /tmp/install-uv.sh
+RUN /tmp/install-uv.sh && rm /tmp/install-uv.sh
+
+# Switch to the non-root 'node' user provided by the base image
+USER node
+
+# Install pi-coding-agent globally
+# The devcontainer image configures global npm permissions correctly for the 'node' user
 RUN npm install -g @mariozechner/pi-coding-agent
 
-# Create non-root user with sudo access
-RUN groupadd -r piuser && useradd -r -g piuser -G audio,video,sudo -m -s /bin/bash piuser
-RUN echo "piuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
-
-# Set workspace
+# Set the workspace directory
 WORKDIR /workspace
-RUN chown piuser:piuser /workspace
 
-USER piuser
-
-# Default entrypoint
-ENTRYPOINT ["pi"]
+# Default command
+CMD ["/bin/bash"]
