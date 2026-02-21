@@ -73,26 +73,15 @@ else
     echo "   ✅ Up to date ($OLD_PI)"
 fi
 
-# --- 4. michalvavra/agents commit ---
-echo "🔍 Checking michalvavra/agents"
+# --- 4. pi-skills commit ---
+echo "🔍 Checking badlogic/pi-skills"
 OLD_COMMIT=$(grep -oP 'git checkout \K[a-f0-9]{40}' "$DOCKERFILE")
-NEW_COMMIT=$(git ls-remote https://github.com/michalvavra/agents HEAD 2>/dev/null | awk '{print $1}')
+NEW_COMMIT=$(git ls-remote https://github.com/badlogic/pi-skills HEAD 2>/dev/null | awk '{print $1}')
 if [ -n "$NEW_COMMIT" ] && [ "$OLD_COMMIT" != "$NEW_COMMIT" ]; then
-    CHANGES+=("michalvavra/agents: ${OLD_COMMIT:0:12} -> ${NEW_COMMIT:0:12}")
+    CHANGES+=("pi-skills: ${OLD_COMMIT:0:12} -> ${NEW_COMMIT:0:12}")
     update_dockerfile "$OLD_COMMIT" "$NEW_COMMIT"
 else
     echo "   ✅ Up to date (${OLD_COMMIT:0:12})"
-fi
-
-# --- 4b. pi-files ---
-echo "🔍 Checking @juanibiapina/pi-files"
-OLD_PF=$(grep -oP 'pi-files@\K[0-9]+\.[0-9]+\.[0-9]+' "$DOCKERFILE")
-NEW_PF=$(npm view @juanibiapina/pi-files version 2>/dev/null)
-if [ -n "$NEW_PF" ] && [ "$OLD_PF" != "$NEW_PF" ]; then
-    CHANGES+=("pi-files: $OLD_PF -> $NEW_PF")
-    update_dockerfile "pi-files@${OLD_PF}" "pi-files@${NEW_PF}"
-else
-    echo "   ✅ Up to date ($OLD_PF)"
 fi
 
 # --- 5. gccli / gdcli / gmcli ---

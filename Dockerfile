@@ -43,20 +43,24 @@ RUN npm install -g @mariozechner/pi-coding-agent@0.53.1 2>&1 | grep -v 'npm noti
 # Suppress git detached HEAD advice
 RUN git config --global advice.detachedHead false
 
-# Install pi packages (extensions and skills)
-# These match the host's ~/.pi/agent/settings.json packages list.
-# WORKDIR must be somewhere writable for pi to create project-level .pi/
-WORKDIR /home/node
-RUN pi install npm:@juanibiapina/pi-files@0.1.0
-RUN pi install npm:@aliou/pi-guardrails@0.7.7
-
-# Install michalvavra/agents skills (pinned to specific commit)
-RUN pi install git:github.com/michalvavra/agents && \
-    cd /home/node/.pi/agent/git/github.com/michalvavra/agents && \
-    git checkout 2f8ff22acf280cd08a833b53ebf2da9d9c2c2eab
+# Install pi-skills from GitHub (pinned to specific commit)
+RUN mkdir -p /home/node/.pi/agent/skills && \
+    git clone https://github.com/badlogic/pi-skills /home/node/.pi/agent/skills/pi-skills && \
+    cd /home/node/.pi/agent/skills/pi-skills && \
+    git checkout 75d32a382b0c8aafce356d68e17d2dc94c0c953b
 
 # Preinstall common skill dependencies (pinned versions)
-RUN npm install -g @mariozechner/gccli@0.1.2 @mariozechner/gdcli@0.1.1 @mariozechner/gmcli@0.2.0 2>&1 | grep -v 'npm notice'
+# Run npm audit fix on browser-tools to address known vulnerabilities
+RUN npm install -g @mariozechner/gccli@0.1.2 @mariozechner/gdcli@0.1.1 @mariozechner/gmcli@0.2.0 2>&1 | grep -v 'npm notice' && \
+    cd /home/node/.pi/agent/skills/pi-skills/brave-search && npm install && \
+    cd /home/node/.pi/agent/skills/pi-skills/browser-tools && npm install && npm audit fix --force 2>/dev/null || true && \
+    cd /home/node/.pi/agent/skills/pi-skills/youtube-transcript && npm install
+
+# Install pi-guardrails extension (security hooks for pi)
+# WORKDIR must be somewhere writable for pi to create project-level .pi/
+WORKDIR /home/node
+RUN pi install npm:@aliou/pi-guardrails@0.7.6 && \
+    pi install git:github.com/michalvavra/agents
 
 # Ensure workspace and .pi are world-writable so any --user UID can write
 USER root
