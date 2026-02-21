@@ -89,7 +89,8 @@ All external dependencies are pinned to prevent tampering:
 | Base Docker image (`devcontainers/typescript-node`) | SHA256 digest in `FROM` |
 | `uv` installer script | SHA256 checksum verified at build time |
 | `pi-coding-agent` | Pinned npm version |
-| `pi-skills` | Pinned git commit hash |
+| `michalvavra/agents` (skills) | Pinned git commit hash |
+| `pi-files` extension | Pinned npm version |
 | `pi-guardrails` extension | Pinned npm version |
 | `gccli`, `gdcli`, `gmcli` | Pinned npm versions |
 
