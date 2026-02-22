@@ -107,3 +107,8 @@ Edit `SENSITIVE_PATTERNS` in `pi-sandboxed` to adjust which files are excluded f
 | [docs/security.md](docs/security.md) | Threat model, mitigations, remaining risks |
 | [docs/supply-chain.md](docs/supply-chain.md) | Pinning strategy, update workflow |
 | [docs/skills.md](docs/skills.md) | Pre-installed skill details and requirements |
+| [AGENTS.md](AGENTS.md) | Guidelines for AI agents working on this repo |
+
+## Acknowledgments
+
+This project was built entirely by AI agents using the [pi coding agent](https://github.com/badlogic/pi) by [Mario Zechner](https://github.com/badlogic). From the Dockerfile to the shell scripts to this README — every line of code was written through human-agent collaboration via pi. Thank you, Mario, for building such a capable tool.
