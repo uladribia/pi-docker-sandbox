@@ -2,13 +2,15 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/config.sh"
+
 INSTALL_DIR="$HOME/.local/bin"
-IMAGE_NAME="pi-agent-sandbox"
 
 echo "=== Pi Agent Sandbox Installer ==="
 echo ""
 
-# --- Check Docker ---
+# --- Check prerequisites ---
+
 if ! command -v docker &> /dev/null; then
     echo "Error: Docker is not installed."
     echo ""
@@ -31,39 +33,40 @@ fi
 
 echo "✅ Docker is available"
 
-# --- Check rsync ---
 if ! command -v rsync &> /dev/null; then
     echo "⚠  rsync not found. Sensitive file filtering will use a slower fallback."
     echo "   Install it with: sudo apt-get install -y rsync"
 fi
 
 # --- Build Docker image ---
+
 echo ""
 echo "Building Docker image '$IMAGE_NAME'..."
-(cd "$SCRIPT_DIR" && docker buildx build -t "$IMAGE_NAME" .)
-echo "✅ Docker image built"
+"$SCRIPT_DIR/build.sh"
 
 # --- Install pi-sandboxed script ---
+
 echo ""
 echo "Installing pi-sandboxed to $INSTALL_DIR..."
 mkdir -p "$INSTALL_DIR"
 
-# Patch REPO_DIR in the script to point to the actual clone location
+# Patch REPO_DIR to point to the actual clone location
 sed "s|REPO_DIR=.*|REPO_DIR=\"$SCRIPT_DIR\"|" "$SCRIPT_DIR/pi-sandboxed" > "$INSTALL_DIR/pi-sandboxed"
 chmod +x "$INSTALL_DIR/pi-sandboxed"
 echo "✅ pi-sandboxed installed"
 
 # --- Check PATH ---
+
 if ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then
     echo ""
     echo "⚠  $INSTALL_DIR is not in your PATH."
     echo "   Add this to your ~/.bashrc or ~/.zshrc:"
     echo ""
     echo "     export PATH=\"\$HOME/.local/bin:\$PATH\""
-    echo ""
 fi
 
-# --- Verify ---
+# --- Done ---
+
 echo ""
 echo "=== Installation complete ==="
 echo ""

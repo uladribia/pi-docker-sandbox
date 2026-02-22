@@ -1,33 +1,20 @@
 #!/bin/bash
-
 # pi-sandboxed: Run the pi coding agent inside a Docker sandbox.
 # The agent can only access files in the current directory.
 
 set -e
 
-# --- Configuration ---
-IMAGE_NAME="pi-agent-sandbox"
 REPO_DIR="/home/newuser/Repositories/ula/pi-docker-sandbox"
+source "$REPO_DIR/config.sh"
+
+# ─── Configuration ────────────────────────────────────────────────────────────
+
 LOG_FILE="$REPO_DIR/pi-sandboxed.log"
 MEMORY_LIMIT="4g"
 CPU_LIMIT="2"
 PIDS_LIMIT="256"
 
-# Allowed domains for outbound network access.
-# Add more as needed (e.g., npm registry, pypi, github).
-ALLOWED_DOMAINS=(
-    api.anthropic.com
-    api.openai.com
-    generativelanguage.googleapis.com
-    api.search.brave.com
-    registry.npmjs.org
-    pypi.org
-    files.pythonhosted.org
-    github.com
-    objects.githubusercontent.com
-)
-
-# Sensitive file/directory patterns to exclude from the mount.
+# Sensitive file patterns excluded from the workspace mount.
 SENSITIVE_PATTERNS=(
     ".env"
     ".env.*"
@@ -41,7 +28,18 @@ SENSITIVE_PATTERNS=(
     "id_ed25519"
 )
 
-# --- Functions ---
+# Environment variables forwarded into the container.
+FORWARDED_VARS=(
+    ANTHROPIC_API_KEY
+    OPENAI_API_KEY
+    GOOGLE_API_KEY
+    BRAVE_API_KEY
+    PI_MODEL
+    PI_PROVIDER
+)
+
+# ─── Functions ────────────────────────────────────────────────────────────────
+
 usage() {
     cat <<EOF
 Usage: pi-sandboxed [OPTIONS] [PI_ARGS...]
@@ -50,9 +48,9 @@ Run the pi coding agent inside a sandboxed Docker container.
 The agent can only access files in the current directory.
 
 Options:
-    --dry-run       Mount the working directory as read-only (for code review)
-    --shell         Drop into a bash shell instead of running pi
-    --no-filter     Don't filter sensitive files (use direct bind mount)
+    --dry-run       Mount the working directory as read-only
+    --shell         Drop into bash instead of running pi
+    --no-filter     Skip sensitive file filtering (direct bind mount)
     --rebuild       Force rebuild the Docker image
     --help          Show this help message
 
@@ -72,66 +70,54 @@ EOF
     exit 0
 }
 
-check_prerequisites() {
+check_docker() {
     if ! command -v docker &> /dev/null; then
-        echo "Error: docker is not installed. Please install docker first."
+        echo "Error: docker is not installed." >&2
         exit 1
     fi
-
     if ! docker info >/dev/null 2>&1; then
-        echo "Error: Cannot connect to the Docker daemon."
-        echo "Is the docker daemon running? Do you have permission? (Try: sudo usermod -aG docker \$USER)"
+        echo "Error: Cannot connect to the Docker daemon." >&2
+        echo "Try: sudo usermod -aG docker \$USER" >&2
         exit 1
     fi
 }
 
 build_image() {
-    if [ -d "$REPO_DIR" ]; then
-        echo "Building image from $REPO_DIR..."
-        (cd "$REPO_DIR" && ./build.sh)
-    else
-        echo "Error: Cannot find build directory at $REPO_DIR"
-        echo "Please build manually: docker build -t $IMAGE_NAME <path-to-Dockerfile>"
+    if [ ! -d "$REPO_DIR" ]; then
+        echo "Error: Build directory not found at $REPO_DIR" >&2
         exit 1
     fi
+    echo "Building image from $REPO_DIR..."
+    "$REPO_DIR/build.sh"
 }
 
 ensure_image() {
-    if [[ "$(docker images -q $IMAGE_NAME 2>/dev/null)" == "" ]]; then
+    if [[ -z "$(docker images -q "$IMAGE_NAME" 2>/dev/null)" ]]; then
         echo "Image '$IMAGE_NAME' not found."
         build_image
     fi
 }
 
-setup_network() {
-    local net_name="pi-sandbox-net"
-
-    # Create the network if it doesn't exist
-    if ! docker network inspect "$net_name" >/dev/null 2>&1; then
-        echo "Creating sandbox network '$net_name'..."
-        docker network create "$net_name" >/dev/null
+ensure_network() {
+    if ! docker network inspect "$NETWORK_NAME" >/dev/null 2>&1; then
+        echo "Creating sandbox network '$NETWORK_NAME'..."
+        docker network create "$NETWORK_NAME" >/dev/null
     fi
-
-    echo "$net_name"
 }
 
+# Copy workspace to a temp dir, excluding sensitive files.
 prepare_filtered_workspace() {
-    # Copy the workspace to a temp dir, excluding sensitive files.
-    # Returns the path to the temp dir.
     local tmpdir
     tmpdir=$(mktemp -d "/tmp/pi-sandbox-workspace.XXXXXX")
 
-    # Build rsync exclude args
     local excludes=()
     for pattern in "${SENSITIVE_PATTERNS[@]}"; do
         excludes+=(--exclude="$pattern")
     done
 
-    # Use rsync if available, otherwise cp with manual exclusion
     if command -v rsync &> /dev/null; then
         rsync -a "${excludes[@]}" "$(pwd)/" "$tmpdir/"
     else
-        # Fallback: plain copy then remove sensitive files
         cp -a "$(pwd)/." "$tmpdir/"
         for pattern in "${SENSITIVE_PATTERNS[@]}"; do
             find "$tmpdir" -name "$pattern" -delete 2>/dev/null || true
@@ -141,24 +127,55 @@ prepare_filtered_workspace() {
     echo "$tmpdir"
 }
 
+# Sync changes from temp workspace back, preserving sensitive originals.
 sync_back() {
-    # Sync changes from the filtered workspace back to the real workspace.
-    # Excludes sensitive files so we don't delete originals.
     local tmpdir="$1"
 
+    local excludes=()
+    for pattern in "${SENSITIVE_PATTERNS[@]}"; do
+        excludes+=(--exclude="$pattern")
+    done
+
     if command -v rsync &> /dev/null; then
-        local excludes=()
-        for pattern in "${SENSITIVE_PATTERNS[@]}"; do
-            excludes+=(--exclude="$pattern")
-        done
         rsync -a --delete "${excludes[@]}" "$tmpdir/" "$(pwd)/"
     else
-        # Fallback: copy back everything (sensitive files were already removed from tmpdir)
         cp -a "$tmpdir/." "$(pwd)/"
     fi
 }
 
-# --- Parse arguments ---
+# Collect env vars that are set on the host.
+collect_env_args() {
+    local -n out=$1
+    for var in "${FORWARDED_VARS[@]}"; do
+        if [ -n "${!var}" ]; then
+            out+=(-e "$var=${!var}")
+        fi
+    done
+}
+
+# Determine TTY flags based on attached terminal.
+tty_flags() {
+    if [ -t 0 ] && [ -t 1 ]; then
+        echo "-it"
+    elif [ -t 1 ]; then
+        echo "-t"
+    fi
+}
+
+log_session() {
+    local mount_mode="$1"
+    shift
+    {
+        echo "=== pi-sandboxed session: $(date -Iseconds) ==="
+        echo "Directory: $(pwd)"
+        echo "Command: $*"
+        echo "Mount mode: $mount_mode"
+        echo "---"
+    } > "$LOG_FILE"
+}
+
+# ─── Parse arguments ─────────────────────────────────────────────────────────
+
 DRY_RUN=false
 SHELL_MODE=false
 FILTER_SENSITIVE=true
@@ -167,34 +184,18 @@ PI_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --dry-run)
-            DRY_RUN=true
-            shift
-            ;;
-        --shell)
-            SHELL_MODE=true
-            shift
-            ;;
-        --no-filter)
-            FILTER_SENSITIVE=false
-            shift
-            ;;
-        --rebuild)
-            FORCE_REBUILD=true
-            shift
-            ;;
-        --help)
-            usage
-            ;;
-        *)
-            PI_ARGS+=("$1")
-            shift
-            ;;
+        --dry-run)       DRY_RUN=true;         shift ;;
+        --shell)         SHELL_MODE=true;       shift ;;
+        --no-filter)     FILTER_SENSITIVE=false; shift ;;
+        --rebuild)       FORCE_REBUILD=true;    shift ;;
+        --help)          usage ;;
+        *)               PI_ARGS+=("$1");       shift ;;
     esac
 done
 
-# --- Main ---
-check_prerequisites
+# ─── Main ─────────────────────────────────────────────────────────────────────
+
+check_docker
 
 if [ "$FORCE_REBUILD" = true ]; then
     build_image
@@ -202,42 +203,35 @@ else
     ensure_image
 fi
 
-# Collect API keys
+ensure_network
+
+# Collect environment variables
 ENV_ARGS=()
-for var in ANTHROPIC_API_KEY OPENAI_API_KEY GOOGLE_API_KEY BRAVE_API_KEY PI_MODEL PI_PROVIDER; do
-    if [ -n "${!var}" ]; then
-        ENV_ARGS+=(-e "$var=${!var}")
-    fi
-done
+collect_env_args ENV_ARGS
 
 if [ ${#ENV_ARGS[@]} -eq 0 ]; then
-    echo "⚠  Warning: No API keys found in environment. Set ANTHROPIC_API_KEY (or similar) before running."
+    echo "⚠  Warning: No API keys found. Set ANTHROPIC_API_KEY (or similar) before running."
 fi
 
-# Setup network
-NETWORK=$(setup_network)
-
-# Determine mount mode and workspace path
-MOUNT_OPTS=""
-WORKSPACE_DIR=""
+# Set up workspace mount
 CLEANUP_DIR=""
+MOUNT_MODE="direct"
 
 if [ "$DRY_RUN" = true ]; then
+    MOUNT_MODE="read-only"
+    MOUNT_ARGS=(-v "$(pwd):/workspace:ro")
     echo "🔒 Dry-run mode: workspace mounted read-only"
-    WORKSPACE_DIR="$(pwd)"
-    MOUNT_OPTS="-v $(pwd):/workspace:ro"
 elif [ "$FILTER_SENSITIVE" = true ]; then
+    MOUNT_MODE="filtered"
+    CLEANUP_DIR=$(prepare_filtered_workspace)
+    MOUNT_ARGS=(-v "$CLEANUP_DIR:/workspace")
     echo "🔒 Filtering sensitive files from workspace..."
-    WORKSPACE_DIR=$(prepare_filtered_workspace)
-    CLEANUP_DIR="$WORKSPACE_DIR"
-    MOUNT_OPTS="-v $WORKSPACE_DIR:/workspace"
-    echo "   Excluded patterns: ${SENSITIVE_PATTERNS[*]}"
+    echo "   Excluded: ${SENSITIVE_PATTERNS[*]}"
 else
-    WORKSPACE_DIR="$(pwd)"
-    MOUNT_OPTS="-v $(pwd):/workspace"
+    MOUNT_ARGS=(-v "$(pwd):/workspace")
 fi
 
-# Determine command
+# Set up container command
 if [ "$SHELL_MODE" = true ]; then
     CONTAINER_CMD=("bash" "${PI_ARGS[@]}")
 else
@@ -247,39 +241,18 @@ fi
 echo ""
 echo "🐳 Starting sandboxed pi agent"
 echo "   Directory: $(pwd)"
-echo "   Network:   $NETWORK (egress filtered)"
+echo "   Network:   $NETWORK_NAME"
 echo "   Resources: mem=$MEMORY_LIMIT, cpus=$CPU_LIMIT, pids=$PIDS_LIMIT"
 echo ""
 
-# Run the container
-CONTAINER_NAME="pi-sandbox-$(date +%s)"
+log_session "$MOUNT_MODE" "${CONTAINER_CMD[*]}"
 
-# Ensure persistent pi config directory exists
-mkdir -p "${HOME}/.pi-sandbox"
-
-# Use -it only if we have a TTY
-TTY_FLAG=""
-if [ -t 0 ] && [ -t 1 ]; then
-    TTY_FLAG="-it"
-elif [ -t 1 ]; then
-    TTY_FLAG="-t"
-fi
-
-# Log session metadata
-{
-    echo "=== pi-sandboxed session: $(date -Iseconds) ==="
-    echo "Directory: $(pwd)"
-    echo "Command: ${CONTAINER_CMD[*]}"
-    echo "Container: $CONTAINER_NAME"
-    echo "Mount mode: $([ "$DRY_RUN" = true ] && echo "read-only" || ([ "$FILTER_SENSITIVE" = true ] && echo "filtered" || echo "direct"))"
-    echo "---"
-} > "$LOG_FILE"
-
-docker run --rm $TTY_FLAG \
-    $MOUNT_OPTS \
+# Run container
+docker run --rm $(tty_flags) \
+    "${MOUNT_ARGS[@]}" \
     "${ENV_ARGS[@]}" \
     --user "$(id -u):$(id -g)" \
-    --network="$NETWORK" \
+    --network="$NETWORK_NAME" \
     --memory="$MEMORY_LIMIT" \
     --cpus="$CPU_LIMIT" \
     --pids-limit="$PIDS_LIMIT" \
@@ -287,7 +260,7 @@ docker run --rm $TTY_FLAG \
     --security-opt=no-new-privileges \
     -v "${HOME}/.pi:/home/node/.pi-host:ro" \
     -e HOME=/home/node \
-    --name "$CONTAINER_NAME" \
+    --name "pi-sandbox-$(date +%s)" \
     "$IMAGE_NAME" \
     "${CONTAINER_CMD[@]}" > >(tee -a "$LOG_FILE") 2> >(tee -a "$LOG_FILE" >&2)
 
@@ -297,7 +270,7 @@ if [ $EXIT_CODE -ne 0 ]; then
     echo "❌ pi-sandboxed exited with code $EXIT_CODE. See log: $LOG_FILE" >&2
 fi
 
-# Sync back changes if we used a filtered workspace
+# Sync back if we used a filtered workspace
 if [ -n "$CLEANUP_DIR" ]; then
     echo ""
     echo "🔄 Syncing changes back to $(pwd)..."
