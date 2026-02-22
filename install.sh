@@ -1,4 +1,5 @@
 #!/bin/bash
+# Build the Docker image and install the pi-sandboxed launcher to PATH.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

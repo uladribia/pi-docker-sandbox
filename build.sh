@@ -1,4 +1,5 @@
 #!/bin/bash
+# Build the pi-agent-sandbox Docker image.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

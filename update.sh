@@ -1,4 +1,5 @@
 #!/bin/bash
+# Auto-detect and update pinned dependencies in the Dockerfile.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -66,7 +67,7 @@ echo "── npm packages ──"
 while IFS= read -r entry; do
     # Split on last @ to handle scoped packages like @scope/pkg@1.0.0
     ver="${entry##*@}"
-    pkg="${entry%@$ver}"
+    pkg="${entry%@"$ver"}"
     [ -z "$pkg" ] && continue
     echo "🔍 $pkg@$ver"
     new_ver=$(npm view "$pkg" version 2>/dev/null || true)
