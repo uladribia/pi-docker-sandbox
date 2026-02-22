@@ -112,3 +112,5 @@ Edit `SENSITIVE_PATTERNS` in `pi-sandboxed` to adjust which files are excluded f
 ## Acknowledgments
 
 This project was built entirely by AI agents using the [pi coding agent](https://github.com/badlogic/pi) by [Mario Zechner](https://github.com/badlogic). From the Dockerfile to the shell scripts to this README — every line of code was written through human-agent collaboration via pi. Thank you, Mario, for building such a capable tool.
+
+Code practices in this repository follow [Dribia's style guides](https://code.dribia.dev) (see [AGENTS.md](AGENTS.md)).
