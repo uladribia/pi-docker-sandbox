@@ -55,7 +55,7 @@ RUN uv python install 3.12
 RUN git config --global advice.detachedHead false
 
 # pi coding agent
-RUN npm install -g @mariozechner/pi-coding-agent@0.53.1 2>&1 | grep -v 'npm notice'
+RUN npm install -g @mariozechner/pi-coding-agent@0.54.0 2>&1 | grep -v 'npm notice'
 
 # pi-skills (pinned commit)
 RUN mkdir -p /home/node/.pi/agent/skills && \
@@ -77,7 +77,7 @@ RUN bun install -g https://github.com/tobi/qmd
 
 # pi extensions
 WORKDIR /home/node
-RUN pi install npm:@aliou/pi-guardrails@0.7.6 && \
+RUN pi install npm:@aliou/pi-guardrails@0.7.7 && \
     pi install git:github.com/michalvavra/agents
 
 # ─── Final root setup ────────────────────────────────────────────────────────
