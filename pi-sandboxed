@@ -51,8 +51,15 @@ Options:
     --dry-run       Mount the working directory as read-only
     --shell         Drop into bash instead of running pi
     --no-filter     Skip sensitive file filtering (direct bind mount)
+    --new-session   Start a fresh session (discard previous conversation)
     --rebuild       Force rebuild the Docker image
     --help          Show this help message
+
+Session persistence:
+    By default, conversation history is preserved across runs when
+    pi-sandboxed is launched from the same directory. Sessions are
+    stored at ~/.pi/agent/sessions/ and scoped to the project folder.
+    Use --new-session to start a fresh conversation.
 
 Environment variables:
     ANTHROPIC_API_KEY   Required for Anthropic models
@@ -66,6 +73,7 @@ Examples:
     cd ~/my-project && pi-sandboxed
     pi-sandboxed --dry-run "review this code for bugs"
     pi-sandboxed "fix the failing tests"
+    pi-sandboxed --new-session "start over from scratch"
 EOF
     exit 0
 }
@@ -165,14 +173,37 @@ build_tty_flags() {
 
 log_session() {
     local mount_mode="$1"
-    shift
+    local session_dir="$2"
+    shift 2
     {
         echo "=== pi-sandboxed session: $(date -Iseconds) ==="
         echo "Directory: $(pwd)"
         echo "Command: $*"
         echo "Mount mode: $mount_mode"
+        echo "Session dir: ${session_dir:-none (ephemeral)}"
         echo "---"
     } > "$LOG_FILE"
+}
+
+# Convert an absolute path to pi's session directory key format.
+# pi encodes /a/b/c as --a-b-c-- (slashes become hyphens, wrapped in --).
+encode_session_path() {
+    local abs_path="$1"
+    echo "--${abs_path#/}--" | tr '/' '-'
+}
+
+# Return the host-side session directory for the given project path.
+resolve_session_dir() {
+    local project_dir="$1"
+    local encoded
+    encoded=$(encode_session_path "$project_dir")
+    echo "${HOME}/.pi/agent/sessions/${encoded}"
+}
+
+# Create the session directory if it does not exist yet.
+ensure_session_dir() {
+    local session_dir="$1"
+    mkdir -p "$session_dir"
 }
 
 # ─── Parse arguments ─────────────────────────────────────────────────────────
@@ -180,17 +211,19 @@ log_session() {
 DRY_RUN=false
 SHELL_MODE=false
 FILTER_SENSITIVE=true
+NEW_SESSION=false
 FORCE_REBUILD=false
 PI_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --dry-run)       DRY_RUN=true;         shift ;;
-        --shell)         SHELL_MODE=true;       shift ;;
+        --dry-run)       DRY_RUN=true;          shift ;;
+        --shell)         SHELL_MODE=true;        shift ;;
         --no-filter)     FILTER_SENSITIVE=false; shift ;;
-        --rebuild)       FORCE_REBUILD=true;    shift ;;
+        --new-session)   NEW_SESSION=true;       shift ;;
+        --rebuild)       FORCE_REBUILD=true;     shift ;;
         --help)          usage ;;
-        *)               PI_ARGS+=("$1");       shift ;;
+        *)               PI_ARGS+=("$1");        shift ;;
     esac
 done
 
@@ -232,6 +265,18 @@ else
     MOUNT_ARGS=(-v "$(pwd):/workspace")
 fi
 
+# Set up session persistence: mount the host project's session dir to the
+# container's /workspace session dir so conversation history survives restarts.
+# pi names session dirs by encoding the working path (e.g. --workspace--).
+SESSION_MOUNT_ARGS=()
+HOST_SESSION_DIR=""
+if [ "$NEW_SESSION" = false ] && [ "$SHELL_MODE" = false ]; then
+    HOST_SESSION_DIR=$(resolve_session_dir "$(pwd)")
+    ensure_session_dir "$HOST_SESSION_DIR"
+    # /workspace is the container's pwd; pi encodes it as --workspace--
+    SESSION_MOUNT_ARGS=(-v "${HOST_SESSION_DIR}:/home/node/.pi/agent/sessions/--workspace--")
+fi
+
 # Set up container command
 if [ "$SHELL_MODE" = true ]; then
     CONTAINER_CMD=("bash" "${PI_ARGS[@]}")
@@ -244,9 +289,14 @@ echo "🐳 Starting sandboxed pi agent"
 echo "   Directory: $(pwd)"
 echo "   Network:   $NETWORK_NAME"
 echo "   Resources: mem=$MEMORY_LIMIT, cpus=$CPU_LIMIT, pids=$PIDS_LIMIT"
+if [ -n "$HOST_SESSION_DIR" ]; then
+    echo "   Session:   $HOST_SESSION_DIR"
+else
+    echo "   Session:   ephemeral (--new-session)"
+fi
 echo ""
 
-log_session "$MOUNT_MODE" "${CONTAINER_CMD[*]}"
+log_session "$MOUNT_MODE" "$HOST_SESSION_DIR" "${CONTAINER_CMD[*]}"
 
 # Run container
 TTY_FLAGS=()
@@ -254,6 +304,7 @@ build_tty_flags TTY_FLAGS
 
 docker run --rm "${TTY_FLAGS[@]}" \
     "${MOUNT_ARGS[@]}" \
+    "${SESSION_MOUNT_ARGS[@]}" \
     "${ENV_ARGS[@]}" \
     --user "$(id -u):$(id -g)" \
     --network="$NETWORK_NAME" \
